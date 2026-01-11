@@ -61,7 +61,7 @@ function convert() {
 
   const cCode = cEditor.getValue();
 
-  fetch("https://code-converter-c-to-js.onrender.com/convert", {
+  fetch("/convert", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ code: cCode })
