@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>C → JavaScript Converter</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<h1>C → JavaScript Converter</h1>
+
+<div class="toolbar">
+  <button id="runBtn" onclick="convert()" disabled>
+    Convert & Run
+  </button>
+</div>
+
+
+<div class="container">
+
+  <div class="panel">
+    <div class="panel-header">C SOURCE</div>
+    <div id="cEditor" class="editor"></div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-header">JAVASCRIPT</div>
+    <div id="jsEditor" class="editor"></div>
+  </div>
+
+  <div class="panel output-panel">
+    <div class="panel-header">OUTPUT</div>
+    <div id="outputEditor" class="editor"></div>
+  </div>
+
+</div>
+
+
+<div class="footer">
+  C → JavaScript Transpiler • Monaco Editor
+</div>
+
+<!-- Monaco Loader -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.45.0/min/vs/loader.min.js"></script>
+<script src="script.js"></script>
+</body>
+</html>
