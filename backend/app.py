@@ -6,6 +6,10 @@ import sys
 app = Flask(__name__)
 CORS(app)
 
+@app.route("/")
+def index():
+    return jsonify({"message": "Welcome to the C-to-JS Converter API"})
+
 @app.route("/convert", methods=["POST"])
 def convert():
     try:
