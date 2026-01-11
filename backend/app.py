@@ -1,14 +1,16 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, render_template
 from flask_cors import CORS
 from converter import convert_c_to_js
 import sys
+import os
 
-app = Flask(__name__)
+frontend_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../frontend"))
+app = Flask(__name__, static_folder=frontend_path, template_folder=frontend_path, static_url_path='')
 CORS(app)
 
 @app.route("/")
 def index():
-    return jsonify({"message": "Welcome to the C-to-JS Converter API"})
+    return render_template("index.html")
 
 @app.route("/convert", methods=["POST"])
 def convert():
@@ -32,4 +34,10 @@ def convert():
 
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    try:
+        from waitress import serve
+        print("Server running on http://127.0.0.1:5000")
+        serve(app, host="0.0.0.0", port=5000)
+    except ImportError:
+        print("Waitress not installed. Using Flask dev server (pip install waitress)")
+        app.run(debug=True)
