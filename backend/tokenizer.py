@@ -214,12 +214,122 @@ def validate_headers(code):
             f"Function(s) {', '.join(sorted(illegal))} used without proper header"
         )
 
+def get_needed_runtime(js_code, headers):
+    runtime_parts = []
+
+    # Only include pointer runtime if pointer/ref helpers are used
+    pointer_symbols = {"__Ptr", "__ref", "__ref_arr", "__ref_prop", "__deref", "__set_deref", "__ptr_add", "__ptr_sub"}
+    if any(re.search(rf"\b{sym}\b", js_code) for sym in pointer_symbols):
+        runtime_parts.append(RUNTIME_CORE.strip())
+    elif re.search(r"\b__sizeof\b", js_code):
+        runtime_parts.append("""function __sizeof(val) {
+    if (val === null || val === undefined) return 8;
+    if (Array.isArray(val)) return val.length * 4;
+    if (typeof val === 'number') return 4;
+    if (typeof val === 'string') return val.length;
+    if (typeof val === 'boolean') return 1;
+    if (typeof val === 'object') return Object.keys(val).length * 4;
+    return 8;
+}""")
+
+    if re.search(r"\bNULL\b", js_code):
+        runtime_parts.append("const NULL = null;")
+
+    # stdlib.h functions (only include if actually used)
+    stdlib_funcs = {
+        "malloc": "const malloc = (bytes) => new Array(Math.ceil(bytes / 4) || 1).fill(0);",
+        "calloc": "const calloc = (num, size) => new Array(num * size).fill(0);",
+        "free": "const free = (ptr) => {};",
+        "abs": "const abs = Math.abs;",
+        "rand": "const rand = () => Math.floor(Math.random() * 32768);",
+        "srand": "const srand = (seed) => {};",
+        "atoi": "const atoi = (str) => parseInt(str, 10) || 0;",
+        "atof": "const atof = (str) => parseFloat(str) || 0.0;",
+        "exit": "const exit = (code) => { throw new Error(`Process exited with code ${code}`); };"
+    }
+    for fn, impl in stdlib_funcs.items():
+        if re.search(rf"\b{fn}\b", js_code):
+            runtime_parts.append(impl)
+
+    # string.h functions (only include if actually used)
+    string_funcs = {
+        "strlen": "const strlen = (s) => (typeof s === 'string' ? s.length : (Array.isArray(s) ? (s.indexOf(0) !== -1 ? s.indexOf(0) : s.length) : 0));",
+        "strcpy": """const strcpy = (dest, src) => {
+    if (Array.isArray(dest)) {
+        for (let i = 0; i < src.length; i++) dest[i] = typeof src === 'string' ? src.charCodeAt(i) : src[i];
+        dest[src.length] = 0;
+        return dest;
+    }
+    return src;
+};""",
+        "strcmp": """const strcmp = (s1, s2) => {
+    const str1 = typeof s1 === 'string' ? s1 : (Array.isArray(s1) ? String.fromCharCode(...s1.filter(c => c !== 0)) : String(s1));
+    const str2 = typeof s2 === 'string' ? s2 : (Array.isArray(s2) ? String.fromCharCode(...s2.filter(c => c !== 0)) : String(s2));
+    return str1.localeCompare(str2);
+};""",
+        "strcat": """const strcat = (dest, src) => {
+    if (Array.isArray(dest)) {
+        let start = strlen(dest);
+        for (let i = 0; i < src.length; i++) dest[start + i] = typeof src === 'string' ? src.charCodeAt(i) : src[i];
+        dest[start + src.length] = 0;
+        return dest;
+    }
+    return (dest || "") + (src || "");
+};""",
+        "strncpy": "const strncpy = strcpy;",
+        "strncmp": "const strncmp = strcmp;"
+    }
+    for fn, impl in string_funcs.items():
+        if re.search(rf"\b{fn}\b", js_code):
+            runtime_parts.append(impl)
+
+    # ctype.h functions (only include if actually used)
+    ctype_funcs = {
+        "toupper": "const toupper = (c) => typeof c === 'number' ? String.fromCharCode(c).toUpperCase().charCodeAt(0) : (typeof c === 'string' ? c.toUpperCase() : c);",
+        "tolower": "const tolower = (c) => typeof c === 'number' ? String.fromCharCode(c).toLowerCase().charCodeAt(0) : (typeof c === 'string' ? c.toLowerCase() : c);",
+        "isdigit": "const isdigit = (c) => { const ch = typeof c === 'number' ? String.fromCharCode(c) : String(c); return /\\d/.test(ch) ? 1 : 0; };",
+        "isalpha": "const isalpha = (c) => { const ch = typeof c === 'number' ? String.fromCharCode(c) : String(c); return /[a-zA-Z]/.test(ch) ? 1 : 0; };",
+        "isalnum": "const isalnum = (c) => { const ch = typeof c === 'number' ? String.fromCharCode(c) : String(c); return /[a-zA-Z0-9]/.test(ch) ? 1 : 0; };",
+        "isspace": "const isspace = (c) => { const ch = typeof c === 'number' ? String.fromCharCode(c) : String(c); return /\\s/.test(ch) ? 1 : 0; };"
+    }
+    for fn, impl in ctype_funcs.items():
+        if re.search(rf"\b{fn}\b", js_code):
+            runtime_parts.append(impl)
+
+    # math.h functions (only include if actually used)
+    math_funcs = {
+        "sqrt": "const sqrt = Math.sqrt;",
+        "pow": "const pow = Math.pow;",
+        "sin": "const sin = Math.sin;",
+        "cos": "const cos = Math.cos;",
+        "tan": "const tan = Math.tan;",
+        "floor": "const floor = Math.floor;",
+        "ceil": "const ceil = Math.ceil;",
+        "round": "const round = Math.round;",
+        "log": "const log = Math.log;",
+        "exp": "const exp = Math.exp;"
+    }
+    for fn, impl in math_funcs.items():
+        if re.search(rf"\b{fn}\b", js_code):
+            runtime_parts.append(impl)
+
+    # limits.h constants (only include if actually used)
+    limits_constants = {
+        "INT_MAX": "const INT_MAX = 2147483647;",
+        "INT_MIN": "const INT_MIN = -2147483648;",
+        "CHAR_BIT": "const CHAR_BIT = 8;"
+    }
+    for const_name, impl in limits_constants.items():
+        if re.search(rf"\b{const_name}\b", js_code):
+            runtime_parts.append(impl)
+
+    return "\n\n".join(runtime_parts)
+
 def inject_header_runtime(js, headers, used_functions):
-    runtime_parts = [RUNTIME_CORE.strip()]
-    for header, code in HEADER_RUNTIMES.items():
-        if header in headers:
-            runtime_parts.append(code.strip())
-    return "\n\n".join(runtime_parts) + "\n\n" + js
+    runtime = get_needed_runtime(js, headers)
+    if runtime.strip():
+        return runtime.strip() + "\n\n" + js
+    return js
 
 def extract_macros(code):
     return dict(re.findall(r'#define\s+(\w+)\s+(.+)', code))

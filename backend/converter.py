@@ -85,12 +85,14 @@ def convert_c_to_js(c_code):
     # Step 14: Check undeclared variables in user code
     undeclared = detect_undeclared_variables(user_js, set())
 
-    # Step 15: Inject C runtime and standard library implementations
-    used_functions = extract_function_calls(c_code)
-    final_js = inject_header_runtime(user_js.strip(), headers, used_functions)
+    # Step 15: Determine only the needed runtime machinery (tree-shaken)
+    runtime = get_needed_runtime(user_js, headers).strip()
+    full_js = (runtime + "\n\n" + user_js).strip() if runtime else user_js
 
     return {
-        "js": final_js.strip(),
+        "js": user_js,                # Clean, human-readable transpiled code for display!
+        "runtime": runtime,           # Tree-shaken runtime helpers (if needed)
+        "full_js": full_js,           # Self-contained executable JavaScript
         "structs": structs,
         "macros": macros,
         "undeclared": list(undeclared)
