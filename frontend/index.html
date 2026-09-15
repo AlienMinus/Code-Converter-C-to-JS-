@@ -1,46 +1,142 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <title>C → JavaScript Converter</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>C → JavaScript Studio • Transpiler & Playground</title>
   <link rel="stylesheet" href="style.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 </head>
 <body>
 
-<h1>C → JavaScript Converter</h1>
+  <!-- HEADER -->
+  <header class="app-header">
+    <div class="brand">
+      <span class="brand-icon">⚡</span>
+      <div class="brand-text">
+        <h1>LexCodex</h1>
+        <span class="brand-tag">C → JavaScript Engine</span>
+      </div>
+    </div>
 
-<div class="toolbar">
-  <button id="runBtn" onclick="convert()" disabled>
-    Convert & Run
-  </button>
-</div>
+    <!-- TOOLBAR -->
+    <div class="toolbar">
+      <div class="toolbar-group">
+        <label for="presetSelect" class="toolbar-label">Preset:</label>
+        <select id="presetSelect" onchange="onPresetChange(this.value)">
+          <option value="scanf_basic">1. Basic I/O & Scanf</option>
+          <option value="pointer_swap">2. Pointers & Pass-By-Ref (swap)</option>
+          <option value="pointer_array">3. Pointers & Array Arithmetic</option>
+          <option value="struct_arrow">4. Structs & Arrow Operator (->)</option>
+          <option value="sizeof_casting">5. Sizeof & Type Casting</option>
+          <option value="typedef_enums">6. Typedef & Enums</option>
+          <option value="stdlib_strings">7. Standard Libraries (stdlib, string, ctype)</option>
+          <option value="control_flow">8. Switch Case & Do-While</option>
+        </select>
+      </div>
 
+      <div class="toolbar-group">
+        <button id="runBtn" class="btn-primary" onclick="convert()" disabled title="Convert C to JavaScript and Run (Ctrl+Enter)">
+          <span class="btn-icon">▶</span>
+          <span>Convert & Run</span>
+          <kbd class="shortcut-kbd">Ctrl+↵</kbd>
+        </button>
+      </div>
 
-<div class="container">
+      <div class="toolbar-group">
+        <button id="clearBtn" class="btn-secondary" onclick="clearOutput()" title="Clear Console Output (Ctrl+L)">
+          <span>Clear Output</span>
+        </button>
+      </div>
 
-  <div class="panel">
-    <div class="panel-header">C SOURCE</div>
-    <div id="cEditor" class="editor"></div>
-  </div>
+      <div class="toolbar-group">
+        <label for="themeSelect" class="toolbar-label">Theme:</label>
+        <select id="themeSelect" onchange="changeTheme(this.value)">
+          <option value="vs-dark">Dark</option>
+          <option value="vs">Light</option>
+          <option value="hc-black">High Contrast</option>
+        </select>
+      </div>
+    </div>
+  </header>
 
-  <div class="panel">
-    <div class="panel-header">JAVASCRIPT</div>
-    <div id="jsEditor" class="editor"></div>
-  </div>
+  <!-- MAIN 3-PANEL CONTAINER -->
+  <main class="container">
 
-  <div class="panel output-panel">
-    <div class="panel-header">OUTPUT</div>
-    <div id="outputEditor" class="editor"></div>
-  </div>
+    <!-- PANEL 1: C SOURCE -->
+    <section class="panel c-panel">
+      <div class="panel-header">
+        <div class="panel-title">
+          <span class="lang-tag c-tag">C</span>
+          <span>C SOURCE</span>
+        </div>
+        <div class="panel-actions">
+          <span id="saveStatus" class="save-status">Saved</span>
+          <button class="action-btn" onclick="copyCode('c')" title="Copy C Source">Copy</button>
+          <button class="action-btn" onclick="resetCurrentPreset()" title="Reset to Preset">Reset</button>
+        </div>
+      </div>
+      <div id="cEditor" class="editor"></div>
+    </section>
 
-</div>
+    <!-- PANEL 2: JAVASCRIPT -->
+    <section class="panel js-panel">
+      <div class="panel-header">
+        <div class="panel-title">
+          <span class="lang-tag js-tag">JS</span>
+          <span>JAVASCRIPT</span>
+        </div>
+        <div class="panel-actions">
+          <span id="undeclaredBadge" class="badge badge-warning" style="display: none;"></span>
+          <button class="action-btn" onclick="copyCode('js')" title="Copy Generated JavaScript">Copy</button>
+        </div>
+      </div>
+      <div id="jsEditor" class="editor"></div>
+    </section>
 
+    <!-- PANEL 3: OUTPUT -->
+    <section class="panel output-panel">
+      <div class="panel-header">
+        <div class="panel-title">
+          <span class="lang-tag out-tag">OUT</span>
+          <span>OUTPUT</span>
+        </div>
+        <div class="panel-actions">
+          <span id="timingBadge" class="timing-badge">Ready</span>
+          <button class="action-btn" onclick="copyCode('output')" title="Copy Output">Copy</button>
+        </div>
+      </div>
+      <div id="outputEditor" class="editor"></div>
+    </section>
 
-<div class="footer">
-  C → JavaScript Transpiler • Monaco Editor
-</div>
+  </main>
 
-<!-- Monaco Loader -->
-<script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.45.0/min/vs/loader.min.js"></script>
-<script src="script.js"></script>
+  <!-- FOOTER STATUSBAR -->
+  <footer class="app-footer">
+    <div class="footer-left">
+      <span class="status-indicator live"></span>
+      <span>C Engine Ready</span>
+      <span class="separator">•</span>
+      <span class="features-pill">Pointers</span>
+      <span class="features-pill">sizeof</span>
+      <span class="features-pill">typedef</span>
+      <span class="features-pill">Casting</span>
+      <span class="features-pill">Structs</span>
+      <span class="features-pill">Enums</span>
+      <span class="features-pill">stdlib / string / ctype / math</span>
+    </div>
+    <div class="footer-right">
+      <span>Monaco Editor Core • Run with <kbd>Ctrl+Enter</kbd></span>
+    </div>
+  </footer>
+
+  <!-- Toast Notification -->
+  <div id="toast" class="toast"></div>
+
+  <!-- Monaco Loader -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.45.0/min/vs/loader.min.js"></script>
+  <script src="script.js"></script>
 </body>
 </html>
