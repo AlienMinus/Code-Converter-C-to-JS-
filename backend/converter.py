@@ -2,6 +2,32 @@ from tokenizer import *
 from validator import detect_undeclared_variables
 import re
 
+def normalize_js_indentation(js_code):
+    if not js_code:
+        return js_code
+    lines = js_code.splitlines()
+    formatted = []
+    depth = 0
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            formatted.append("")
+            continue
+        leading_close = 0
+        idx = 0
+        while idx < len(stripped) and stripped[idx] in ('}', ')'):
+            if stripped[idx] == '}':
+                leading_close += 1
+            idx += 1
+        current_depth = max(0, depth - leading_close)
+        formatted.append(("    " * current_depth) + stripped)
+
+        code_without_strings = re.sub(r'(`(?:\\.|[^`])*`|"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\')', '', stripped)
+        opens = code_without_strings.count('{')
+        closes = code_without_strings.count('}')
+        depth = max(0, depth + (opens - closes))
+    return "\n".join(formatted)
+
 def convert_c_to_js(c_code):
     # Step 1: Comments cleanup
     code = remove_comments(c_code)
@@ -87,6 +113,7 @@ def convert_c_to_js(c_code):
         parts.append(processed_main.strip())
 
     user_js = "\n\n".join(parts)
+    user_js = normalize_js_indentation(user_js)
 
     # Step 14: Check undeclared variables in user code
     undeclared = detect_undeclared_variables(user_js, set())

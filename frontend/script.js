@@ -317,7 +317,7 @@ function convert() {
       lastConversionData = data;
       showingRuntime = false;
 
-      const userJs = data.js || data.result;
+      const userJs = formatCode(data.js || data.result);
       const fullJs = data.full_js || userJs;
       const hasRuntime = Boolean(data.runtime && data.runtime.trim().length > 0);
 
@@ -413,6 +413,32 @@ function resetCurrentPreset() {
   }
 }
 
+function formatCode(code) {
+  if (!code) return code;
+  const lines = code.split("\n");
+  let formatted = [];
+  let depth = 0;
+  for (let rawLine of lines) {
+    const stripped = rawLine.trim();
+    if (!stripped) {
+      formatted.push("");
+      continue;
+    }
+    let leadingCloses = 0;
+    for (let char of stripped) {
+      if (char === "}") leadingCloses++;
+      else break;
+    }
+    const currentDepth = Math.max(0, depth - leadingCloses);
+    formatted.push("    ".repeat(currentDepth) + stripped);
+    const codeNoStrings = stripped.replace(/`[\s\S]*?`|"[^"\\]*(?:\\.[^"\\]*)*"|'[^'\\]*(?:\\.[^'\\]*)*'/g, "");
+    const opens = (codeNoStrings.match(/\{/g) || []).length;
+    const closes = (codeNoStrings.match(/\}/g) || []).length;
+    depth = Math.max(0, depth + (opens - closes));
+  }
+  return formatted.join("\n");
+}
+
 function toggleRuntimeHelpers() {
   if (!lastConversionData || !jsEditor) return;
   showingRuntime = !showingRuntime;
@@ -422,7 +448,7 @@ function toggleRuntimeHelpers() {
     if (btn) btn.textContent = "Hide Helpers";
     showToast("Showing complete code with runtime helpers");
   } else {
-    jsEditor.setValue(lastConversionData.js || lastConversionData.result);
+    jsEditor.setValue(formatCode(lastConversionData.js || lastConversionData.result));
     if (btn) btn.textContent = "Show Helpers";
     showToast("Showing clean transpiled code");
   }
