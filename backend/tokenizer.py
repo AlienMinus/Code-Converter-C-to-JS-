@@ -1,258 +1,225 @@
 import re
 
 HEADER_CAPABILITIES = {
-    "stdio.h": {"printf", "scanf"},
-    "math.h": {"sqrt", "pow", "sin", "cos", "tan"},
-    "string.h": {"strlen", "strcpy", "strcmp"}
+    "stdio.h": {"printf", "scanf", "puts", "getchar", "putchar"},
+    "math.h": {"sqrt", "pow", "sin", "cos", "tan", "floor", "ceil", "round", "abs", "log", "exp"},
+    "string.h": {"strlen", "strcpy", "strcmp", "strcat", "strncpy", "strncmp"},
+    "stdlib.h": {"malloc", "calloc", "free", "abs", "rand", "srand", "atoi", "atof", "exit"},
+    "ctype.h": {"toupper", "tolower", "isdigit", "isalpha", "isalnum", "isspace"},
+    "stdbool.h": {"bool"},
+    "limits.h": set()
 }
 
-FORMAT_HANDLERS = {
-    "%d": "Number",
-    "%f": "Number",
-    "%c": "Char",
-    "%s": "String"
+RUNTIME_CORE = """
+class __Ptr {
+    constructor(getter, setter, arr = null, idx = 0) {
+        this._getter = getter;
+        this._setter = setter;
+        this._arr = arr;
+        this._idx = idx;
+        return new Proxy(this, {
+            get(target, prop) {
+                if (prop in target) return target[prop];
+                const i = Number(prop);
+                if (!isNaN(i)) {
+                    if (target._arr) return target._arr[target._idx + i];
+                }
+                if (target._getter) {
+                    const obj = target._getter();
+                    if (obj && typeof obj === 'object') return obj[prop];
+                }
+                return undefined;
+            },
+            set(target, prop, value) {
+                const i = Number(prop);
+                if (!isNaN(i)) {
+                    if (target._arr) {
+                        target._arr[target._idx + i] = value;
+                        return true;
+                    }
+                }
+                if (target._getter) {
+                    const obj = target._getter();
+                    if (obj && typeof obj === 'object') {
+                        obj[prop] = value;
+                        return true;
+                    }
+                }
+                target[prop] = value;
+                return true;
+            }
+        });
+    }
+    get val() {
+        if (this._arr !== null) return this._arr[this._idx];
+        return this._getter ? this._getter() : undefined;
+    }
+    set val(v) {
+        if (this._arr !== null) this._arr[this._idx] = v;
+        else if (this._setter) this._setter(v);
+    }
+}
+function __ref(getter, setter) {
+    return new __Ptr(getter, setter);
+}
+function __ref_arr(arr, idx = 0) {
+    return new __Ptr(null, null, arr, idx);
+}
+function __ref_prop(obj, prop) {
+    return new __Ptr(() => obj[prop], v => { obj[prop] = v; });
+}
+function __deref(p) {
+    if (p && typeof p === 'object' && 'val' in p) return p.val;
+    return p;
+}
+function __set_deref(p, v) {
+    if (p && typeof p === 'object' && 'val' in p) {
+        p.val = v;
+        return v;
+    }
+    return v;
+}
+function __ptr_add(p, n) {
+    if (p instanceof __Ptr && p._arr !== null) {
+        return new __Ptr(null, null, p._arr, p._idx + n);
+    }
+    return p + n;
+}
+function __ptr_sub(p, n) {
+    return __ptr_add(p, -n);
+}
+function __sizeof(val) {
+    if (val === null || val === undefined) return 8;
+    if (Array.isArray(val)) return val.length * 4;
+    if (typeof val === 'number') return 4;
+    if (typeof val === 'string') return val.length;
+    if (typeof val === 'boolean') return 1;
+    if (typeof val === 'object') return Object.keys(val).length * 4;
+    return 8;
+}
+const NULL = null;
+"""
+
+HEADER_RUNTIMES = {
+    "stdlib.h": """
+const malloc = (bytes) => new Array(Math.ceil(bytes / 4) || 1).fill(0);
+const calloc = (num, size) => new Array(num * size).fill(0);
+const free = (ptr) => {};
+const abs = Math.abs;
+const rand = () => Math.floor(Math.random() * 32768);
+const srand = (seed) => {};
+const atoi = (str) => parseInt(str, 10) || 0;
+const atof = (str) => parseFloat(str) || 0.0;
+const exit = (code) => { throw new Error(`Process exited with code ${code}`); };
+""",
+    "string.h": """
+const strlen = (s) => (typeof s === 'string' ? s.length : (Array.isArray(s) ? (s.indexOf(0) !== -1 ? s.indexOf(0) : s.length) : 0));
+const strcpy = (dest, src) => {
+    if (Array.isArray(dest)) {
+        for (let i = 0; i < src.length; i++) dest[i] = typeof src === 'string' ? src.charCodeAt(i) : src[i];
+        dest[src.length] = 0;
+        return dest;
+    }
+    return src;
+};
+const strcmp = (s1, s2) => {
+    const str1 = typeof s1 === 'string' ? s1 : (Array.isArray(s1) ? String.fromCharCode(...s1.filter(c => c !== 0)) : String(s1));
+    const str2 = typeof s2 === 'string' ? s2 : (Array.isArray(s2) ? String.fromCharCode(...s2.filter(c => c !== 0)) : String(s2));
+    return str1.localeCompare(str2);
+};
+const strcat = (dest, src) => {
+    if (Array.isArray(dest)) {
+        let start = strlen(dest);
+        for (let i = 0; i < src.length; i++) dest[start + i] = typeof src === 'string' ? src.charCodeAt(i) : src[i];
+        dest[start + src.length] = 0;
+        return dest;
+    }
+    return (dest || "") + (src || "");
+};
+const strncpy = strcpy;
+const strncmp = strcmp;
+""",
+    "ctype.h": """
+const toupper = (c) => typeof c === 'number' ? String.fromCharCode(c).toUpperCase().charCodeAt(0) : (typeof c === 'string' ? c.toUpperCase() : c);
+const tolower = (c) => typeof c === 'number' ? String.fromCharCode(c).toLowerCase().charCodeAt(0) : (typeof c === 'string' ? c.toLowerCase() : c);
+const isdigit = (c) => { const ch = typeof c === 'number' ? String.fromCharCode(c) : String(c); return /\\d/.test(ch) ? 1 : 0; };
+const isalpha = (c) => { const ch = typeof c === 'number' ? String.fromCharCode(c) : String(c); return /[a-zA-Z]/.test(ch) ? 1 : 0; };
+const isalnum = (c) => { const ch = typeof c === 'number' ? String.fromCharCode(c) : String(c); return /[a-zA-Z0-9]/.test(ch) ? 1 : 0; };
+const isspace = (c) => { const ch = typeof c === 'number' ? String.fromCharCode(c) : String(c); return /\\s/.test(ch) ? 1 : 0; };
+""",
+    "math.h": """
+const sqrt = Math.sqrt;
+const pow = Math.pow;
+const sin = Math.sin;
+const cos = Math.cos;
+const tan = Math.tan;
+const floor = Math.floor;
+const ceil = Math.ceil;
+const round = Math.round;
+const log = Math.log;
+const exp = Math.exp;
+""",
+    "limits.h": """
+const INT_MAX = 2147483647;
+const INT_MIN = -2147483648;
+const CHAR_BIT = 8;
+"""
 }
 
-
-def remove_includes(code):
-    return re.sub(r"#include\s*<.*?>", "", code)
-
-def replace_variable_declarations(code):
-    return re.sub(
-        r"\b(int|float|double|char)\s+(\w+)\b",
-        r"let \2",
-        code
-    )
-
-def replace_main(code):
-    return code.replace("int main()", "")
-
-def replace_printf(code):
-    return re.sub(r"printf\s*\(", "console.log(", code)
-
-def replace_scanf(code):
-    return re.sub(r"scanf\s*\(", "prompt(", code)
-
-def remove_return_zero(code):
-    return re.sub(r"\breturn\s+0\s*;", "", code)
-
-
-def extract_main_body(code):
-    start = code.find("int main")
-    if start == -1:
-        return ""
-
-    brace_start = code.find("{", start)
-    if brace_start == -1:
-        return ""
-
-    brace_count = 0
-    body = []
-
-    for i in range(brace_start, len(code)):
-        if code[i] == "{":
-            brace_count += 1
-            if brace_count == 1:
-                continue
-        elif code[i] == "}":
-            brace_count -= 1
-            if brace_count == 0:
-                break
-
-        if brace_count >= 1:
-            body.append(code[i])
-
-    return "".join(body).strip()
-
-
-def extract_non_main_functions(code):
-    functions = re.findall(
-        r"(void|int|float|double|char)\s+(\w+)\s*\([^)]*\)\s*\{[\s\S]*?\}",
-        code
-    )
-
-    extracted = []
-    for f in functions:
-        if f[1] != "main":
-            block = re.search(
-                rf"{f[0]}\s+{f[1]}\s*\([^)]*\)\s*\{{[\s\S]*?\}}",
-                code
-            )
-            if block:
-                extracted.append(block.group(0))
-
-    return "\n\n".join(extracted)
-
-def convert_function_syntax(code):
-    # Convert function declaration
-    code = re.sub(
-        r"(void|int|float|double|char)\s+(\w+)\s*\(([^)]*)\)",
-        lambda m: f"function {m.group(2)}({remove_param_types(m.group(3))})",
-        code
-    )
-    return code
-
-
-def remove_param_types(param_str):
-    if not param_str.strip():
-        return ""
-
-    params = param_str.split(",")
-    clean_params = []
-
-    for p in params:
-        parts = p.strip().split()
-        clean_params.append(parts[-1])  # keep variable name only
-
-    return ", ".join(clean_params)
-
-def convert_printf_to_template(code):
+def remove_comments(code):
     def replacer(match):
-        fmt = match.group(1)
-        args = match.group(2)
-
-        # No arguments → plain string
-        if not args:
-            return f"console.log(`{fmt}`);"
-
-        arg_list = [a.strip() for a in args.split(",")]
-        specs = re.findall(r"%[dfsci]", fmt)
-
-        if len(specs) != len(arg_list):
-            raise SyntaxError("printf format specifier mismatch")
-
-        for spec, arg in zip(specs, arg_list):
-            fmt = fmt.replace(spec, f"${{{arg}}}", 1)
-
-        # 🔥 ALWAYS USE BACKTICKS
-        return f"console.log(`{fmt}`);"
-
-    return re.sub(
-        r'printf\s*\(\s*"([^"]*)"\s*(?:,\s*(.*?))?\s*\)\s*;',
-        replacer,
-        code
-    )
-
-def collect_declared_variables(code):
-    # int x;  int x = 5;
-    decls = re.findall(r"\b(int|float|double|char)\s+(\w+)", code)
-    return set(var for _, var in decls)
-
-
-def find_variable_usages(code):
-    return re.findall(r"\b[a-zA-Z_]\w*\b", code)
-
-def replace_prompted_scanf(code):
-    pattern = re.compile(
-        r'printf\s*\(\s*"([^"]*)"\s*\)\s*;\s*'
-        r'scanf\s*\(\s*"(%[dfc])"\s*,\s*&\s*(\w+)\s*\)\s*;',
-        re.MULTILINE
-    )
-
-    def replacer(match):
-        prompt_text = match.group(1)
-        fmt = match.group(2)
-        var = match.group(3)
-
-        if fmt in ("%d", "%f"):
-            return f'{var} = Number(prompt("{prompt_text}"));'
-
-        if fmt == "%c":
-            return f'{var} = prompt("{prompt_text}")[0];'
-        if fmt == "%s":
-            return f'{var} = prompt("{prompt_text}");'
-
-        raise SyntaxError(f"Unsupported scanf format: {fmt}")
-
+        s = match.group(0)
+        if s.startswith('/'):
+            return " "
+        return s
+    pattern = re.compile(r'//.*?$|/\*[\s\S]*?\*/|"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'', re.MULTILINE)
     return pattern.sub(replacer, code)
-
-def replace_scanf(code):
-    def replacer(match):
-        fmt = match.group(1).strip()
-        var = match.group(2).strip()
-
-        if fmt == "%d" or fmt == "%f":
-            return f"{var} = Number(prompt());"
-
-        if fmt == "%c":
-            return f"{var} = prompt()[0];"
-
-        if fmt == "%s":
-            return f"{var} = prompt();"
-
-
-        raise SyntaxError(
-            f"Unsupported scanf format: {fmt}. "
-            "Only %d, %f, %c are supported."
-        )
-
-    return re.sub(
-        r'scanf\s*\(\s*"([^"]+)"\s*,\s*&\s*(\w+)\s*\)\s*;',
-        replacer,
-        code
-    )
 
 def extract_headers(code):
     return set(re.findall(r'#include\s*<([^>]+)>', code))
+
+def remove_includes(code):
+    return re.sub(r'#include\s*<.*?>', '', code)
 
 def extract_function_calls(code):
     return set(re.findall(r'\b([a-zA-Z_]\w*)\s*\(', code))
 
 C_KEYWORDS = {
-    "if", "for", "while", "do", "switch", "case",
-    "return", "sizeof"
+    "if", "else", "for", "while", "do", "switch", "case", "default",
+    "return", "sizeof", "break", "continue", "typedef", "struct", "enum"
 }
 
 def validate_headers(code):
     headers = extract_headers(code)
     used_functions = extract_function_calls(code)
-
-    # Functions allowed by included headers
     allowed_functions = set()
     for h in headers:
         if h not in HEADER_CAPABILITIES:
             raise SyntaxError(f"Unknown header <{h}>")
         allowed_functions |= HEADER_CAPABILITIES[h]
 
-    # Functions defined by user in the same file
+    # User defined functions
     user_functions = set(re.findall(
-        r'\b(?:void|int|float|double|char)\s+(\w+)\s*\(',
+        r'\b(?:(?:unsigned|signed|const|static)\s+)*(?:void|int|float|double|char|short|long|bool|_Bool|[a-zA-Z_]\w*)(?:\s*\*+)?\s+([a-zA-Z_]\w*)\s*\(',
         code
     ))
 
-    # Remove things that are NOT library calls
     used_functions -= C_KEYWORDS
     used_functions -= user_functions
     used_functions.discard("main")
 
-    # ❌ Illegal library usage
     illegal = used_functions - allowed_functions
-
     if illegal:
         raise SyntaxError(
             f"Function(s) {', '.join(sorted(illegal))} used without proper header"
         )
-    
+
 def inject_header_runtime(js, headers, used_functions):
-    runtime = []
-
-    if "math.h" in headers:
-        mapping = {
-            "sqrt": "Math.sqrt",
-            "pow": "Math.pow",
-            "sin": "Math.sin",
-            "cos": "Math.cos",
-            "tan": "Math.tan"
-        }
-
-        for fn, impl in mapping.items():
-            if fn in used_functions:
-                runtime.append(f"const {fn} = {impl};")
-
-    if runtime:
-        return "\n".join(runtime) + "\n\n" + js
-
-    return js
+    runtime_parts = [RUNTIME_CORE.strip()]
+    for header, code in HEADER_RUNTIMES.items():
+        if header in headers:
+            runtime_parts.append(code.strip())
+    return "\n\n".join(runtime_parts) + "\n\n" + js
 
 def extract_macros(code):
     return dict(re.findall(r'#define\s+(\w+)\s+(.+)', code))
@@ -265,135 +232,553 @@ def apply_macros(code, macros):
         code = re.sub(rf'\b{name}\b', f'({value})', code)
     return code
 
-def extract_structs(code):
-    """
-    Extract struct definitions.
-    Returns:
-    {
-        "Point": ["x", "y"]
-    }
-    """
-    structs = {}
-    pattern = re.compile(
-        r'struct\s+(\w+)\s*\{([^}]+)\}\s*;',
-        re.DOTALL
+def parse_enum_body(body):
+    entries = {}
+    current_val = 0
+    items = body.split(",")
+    for item in items:
+        item = item.strip()
+        if not item:
+            continue
+        if "=" in item:
+            k, v = item.split("=", 1)
+            k = k.strip()
+            v = int(v.strip())
+            current_val = v
+            entries[k] = current_val
+        else:
+            entries[item] = current_val
+        current_val += 1
+    return entries
+
+def extract_all_typedefs(code):
+    typedef_types = {}
+    typedef_structs = {}
+    typedef_enums = {}
+
+    # 1. typedef struct [Name]? { ... } Alias;
+    def struct_repl(match):
+        body = match.group(1)
+        alias = match.group(2)
+        fields = []
+        for line in body.split(";"):
+            line = line.strip()
+            if line:
+                parts = line.split()
+                fname = parts[-1].lstrip("*")
+                fields.append(fname)
+        typedef_structs[alias] = fields
+        typedef_types[alias] = "struct"
+        return ""
+
+    code = re.sub(
+        r'typedef\s+struct(?:\s+\w+)?\s*\{([^}]+)\}\s*(\w+)\s*;',
+        struct_repl,
+        code
     )
 
+    # 2. typedef enum [Name]? { ... } Alias;
+    def enum_repl(match):
+        body = match.group(1)
+        alias = match.group(2)
+        entries = parse_enum_body(body)
+        typedef_enums[alias] = entries
+        typedef_types[alias] = "enum"
+        decls = [f"const {k} = {v};" for k, v in entries.items()]
+        return "\n".join(decls)
+
+    code = re.sub(
+        r'typedef\s+enum(?:\s+\w+)?\s*\{([^}]+)\}\s*(\w+)\s*;',
+        enum_repl,
+        code
+    )
+
+    # 3. typedef struct Name Alias;
+    def struct_alias_repl(match):
+        name = match.group(1)
+        alias = match.group(2)
+        typedef_types[alias] = f"struct {name}"
+        return ""
+
+    code = re.sub(
+        r'typedef\s+struct\s+(\w+)\s+(\w+)\s*;',
+        struct_alias_repl,
+        code
+    )
+
+    # 4. General typedef: typedef <type> <alias>;
+    def gen_repl(match):
+        type_str = match.group(1).strip()
+        alias = match.group(2).strip()
+        typedef_types[alias] = type_str
+        return ""
+
+    code = re.sub(
+        r'typedef\s+((?:(?:unsigned|signed|long\s+long|long|short|const|static)\s+)*(?:int|float|double|char|short|long|void|bool|_Bool|[a-zA-Z_]\w*)(?:\s*\*+)?)\s+([a-zA-Z_]\w*)\s*;',
+        gen_repl,
+        code
+    )
+
+    return typedef_types, typedef_structs, typedef_enums, code
+
+def extract_and_convert_enums(code):
+    enums = {}
+    pattern = re.compile(r'enum\s+(?:(\w+)\s*)?\{([^}]+)\}(?:\s*(\w+))?\s*;')
+
+    def replacer(match):
+        name = match.group(1)
+        body = match.group(2)
+        var = match.group(3)
+        entries = parse_enum_body(body)
+        enums.update(entries)
+        decls = [f"const {k} = {v};" for k, v in entries.items()]
+        if var:
+            decls.append(f"let {var} = 0;")
+        return "\n".join(decls)
+
+    code = pattern.sub(replacer, code)
+    return enums, code
+
+def extract_structs(code):
+    structs = {}
+    pattern = re.compile(r'struct\s+(\w+)\s*\{([^}]+)\}\s*;', re.DOTALL)
     for name, body in pattern.findall(code):
         fields = []
         for line in body.split(";"):
             line = line.strip()
             if not line:
                 continue
-            # int x;  float y;
             parts = line.split()
-            fields.append(parts[-1])
+            fname = parts[-1].lstrip("*")
+            fields.append(fname)
         structs[name] = fields
-
     return structs
 
 def remove_struct_definitions(code):
-    return re.sub(
-        r'struct\s+\w+\s*\{[^}]+\}\s*;',
-        '',
-        code,
-        flags=re.DOTALL
-    )
+    return re.sub(r'struct\s+\w+\s*\{[^}]+\}\s*;', '', code, flags=re.DOTALL)
+
+def extract_array_declarations(code):
+    base_types = r"(?:(?:unsigned|signed|long\s+long|long|short|const|static)\s+)*(?:int|float|double|char|short|long|void|bool|_Bool|\w+)"
+    pattern = rf'\b({base_types})\s+(\w+)\s*\[(\d+)\]\s*(=\s*\{{[^}}]+\}})?\s*;'
+    matches = re.findall(pattern, code)
+    arrays = {}
+    for elem_type, name, size, init in matches:
+        arrays[name] = (elem_type.strip(), int(size))
+    return arrays
+
+def replace_struct_array_declarations(code, structs):
+    for struct_name, fields in structs.items():
+        pattern = rf'\b(?:struct\s+)?{struct_name}\s+(\w+)\s*\[(\d+)\]\s*;'
+        def repl(match):
+            var = match.group(1)
+            size = int(match.group(2))
+            obj = "{ " + ", ".join(f"{f}: 0" for f in fields) + " }"
+            return f"let {var} = Array({size}).fill(null).map(() => ({obj}));"
+        code = re.sub(pattern, repl, code)
+    return code
 
 def replace_struct_declarations(code, structs):
-    """
-    structs = {
-        "Point": ["x", "y"],
-        "Rect": ["w", "h"]
-    }
-    """
     for struct_name, fields in structs.items():
-        pattern = rf'\b{struct_name}\s+(\w+)\s*;'
+        # Designated initializers: struct Point p = { .x = 10, .y = 20 };
+        desig_pattern = rf'\b(?:struct\s+)?{struct_name}\s+(\w+)\s*=\s*\{{([^}}]*\.[^}}]+)\}}\s*;'
+        def desig_repl(match):
+            var = match.group(1)
+            init_body = match.group(2)
+            pairs = []
+            for item in init_body.split(","):
+                item = item.strip()
+                if not item:
+                    continue
+                m = re.match(r'\.?([a-zA-Z_]\w*)\s*=\s*(.+)', item)
+                if m:
+                    pairs.append(f"{m.group(1)}: {m.group(2).strip()}")
+            return f"let {var} = {{ {', '.join(pairs)} }};"
+        code = re.sub(desig_pattern, desig_repl, code)
 
-        def replacer(match):
+        # Positional initializers: struct Point p = { 10, 20 };
+        pos_pattern = rf'\b(?:struct\s+)?{struct_name}\s+(\w+)\s*=\s*\{{([^}}]+)\}}\s*;'
+        def pos_repl(match):
+            var = match.group(1)
+            vals = [v.strip() for v in match.group(2).split(",")]
+            pairs = []
+            for f, v in zip(fields, vals):
+                pairs.append(f"{f}: {v}")
+            if len(vals) < len(fields):
+                for f in fields[len(vals):]:
+                    pairs.append(f"{f}: 0")
+            return f"let {var} = {{ {', '.join(pairs)} }};"
+        code = re.sub(pos_pattern, pos_repl, code)
+
+        # Uninitialized: struct Point p;
+        uninit_pattern = rf'\b(?:struct\s+)?{struct_name}\s+(\w+)\s*;'
+        def uninit_repl(match):
             var = match.group(1)
             init = ", ".join(f"{f}: 0" for f in fields)
             return f"let {var} = {{ {init} }};"
-
-        code = re.sub(pattern, replacer, code)
+        code = re.sub(uninit_pattern, uninit_repl, code)
 
     return code
 
-def extract_typedef_structs(code):
-    """
-    Extract typedef structs.
-    Returns:
-    {
-        "Point": ["x", "y"]
-    }
-    """
-    typedefs = {}
-
-    pattern = re.compile(
-        r'typedef\s+struct(?:\s+\w+)?\s*\{([^}]+)\}\s*(\w+)\s*;',
-        re.DOTALL
-    )
-
-    for body, alias in pattern.findall(code):
-        fields = []
-        for line in body.split(";"):
-            line = line.strip()
-            if not line:
-                continue
-            parts = line.split()
-            fields.append(parts[-1])
-        typedefs[alias] = fields
-
-    return typedefs
-
-def remove_typedef_structs(code):
-    return re.sub(
-        r'typedef\s+struct(?:\s+\w+)?\s*\{[^}]+\}\s*\w+\s*;',
-        '',
-        code,
-        flags=re.DOTALL
-    )
-
-def extract_array_declarations(code):
-    """
-    int a[5];
-    int a[3] = {1,2,3};
-    """
-    return re.findall(
-        r'\b(int|float|double|char)\s+(\w+)\s*\[(\d+)\]\s*(=\s*\{[^}]+\})?\s*;',
-        code
-    )
-
 def replace_array_declarations(code):
+    base_types = r"(?:(?:unsigned|signed|long\s+long|long|short|const|static)\s+)*(?:int|float|double|char|short|long|void|bool|_Bool|\w+)"
+    pattern = rf'\b{base_types}\s+(\w+)\s*\[(\d+)\]\s*(=\s*\{{([^}}]+)\}})?\s*;'
     def repl(match):
-        _, name, size, init = match.groups()
-
-        if init:
-            values = init.split("{")[1].split("}")[0]
+        name = match.group(1)
+        size = match.group(2)
+        init_body = match.group(3)
+        if init_body:
+            values = match.group(4)
             return f"let {name} = [{values}];"
         else:
             return f"let {name} = Array({size}).fill(0);"
+    return re.sub(pattern, repl, code)
 
-    return re.sub(
-        r'\b(int|float|double|char)\s+(\w+)\s*\[(\d+)\]\s*(=\s*\{[^}]+\})?\s*;',
-        repl,
+def replace_sizeof(code, known_types=None, structs=None, array_vars=None):
+    if known_types is None:
+        known_types = {}
+    if structs is None:
+        structs = {}
+    if array_vars is None:
+        array_vars = {}
+
+    TYPE_SIZES = {
+        "char": 1, "unsigned char": 1, "signed char": 1,
+        "short": 2, "unsigned short": 2, "signed short": 2,
+        "int": 4, "unsigned int": 4, "signed int": 4, "unsigned": 4, "signed": 4,
+        "float": 4,
+        "double": 8, "long double": 8,
+        "long": 8, "unsigned long": 8, "signed long": 8,
+        "long long": 8, "unsigned long long": 8, "signed long long": 8,
+        "bool": 1, "_Bool": 1, "void": 1
+    }
+
+    def get_type_size(type_name):
+        type_name = type_name.strip()
+        if "*" in type_name:
+            return 8
+        if type_name.startswith("struct "):
+            sname = type_name[7:].strip()
+            if sname in structs:
+                return len(structs[sname]) * 4
+            return 8
+        if type_name in structs:
+            return len(structs[type_name]) * 4
+        if type_name in known_types:
+            resolved = known_types[type_name]
+            return get_type_size(resolved)
+        if type_name in TYPE_SIZES:
+            return TYPE_SIZES[type_name]
+        return None
+
+    def replacer(match):
+        arg = match.group(1).strip()
+        sz = get_type_size(arg)
+        if sz is not None:
+            return str(sz)
+        if arg in array_vars:
+            elem_type, count = array_vars[arg]
+            elem_sz = get_type_size(elem_type) or 4
+            return str(elem_sz * count)
+        return f"__sizeof({arg})"
+
+    return re.sub(r'\bsizeof\s*\(\s*([^)]+)\s*\)', replacer, code)
+
+def replace_type_casting(code, known_types=None):
+    if known_types is None:
+        known_types = set()
+
+    types_list = [
+        "int", "float", "double", "char", "short", "long",
+        "long long", "unsigned int", "unsigned long", "unsigned short",
+        "unsigned char", "signed int", "bool", "_Bool", "void*"
+    ]
+    types_list.extend(known_types)
+    types_list = sorted(types_list, key=len, reverse=True)
+    type_pat = "|".join(re.escape(t) for t in types_list)
+    full_type_pat = rf"(?:{type_pat}|\w+\s*\*+)"
+
+    cast_pattern = re.compile(
+        rf'\(\s*({full_type_pat})\s*\)\s*([a-zA-Z_]\w*(?:\.[a-zA-Z_]\w*|\[[^\]]+\])?|\d+(?:\.\d+)?|\([^)]+\))'
+    )
+
+    def replacer(match):
+        cast_type = match.group(1).strip()
+        expr = match.group(2).strip()
+
+        if "*" in cast_type or cast_type in ("void*", "void *"):
+            return f"({expr})"
+        if cast_type in ("int", "short", "long", "long long", "signed int"):
+            return f"(typeof ({expr}) === 'string' ? ({expr}).charCodeAt(0) : Math.trunc({expr}))"
+        if cast_type in ("unsigned int", "unsigned long", "unsigned short", "unsigned char"):
+            return f"(({expr}) >>> 0)"
+        if cast_type in ("float", "double"):
+            return f"Number({expr})"
+        if cast_type in ("char", "signed char", "unsigned char"):
+            return f"(typeof ({expr}) === 'number' ? String.fromCharCode({expr}) : String({expr}))"
+        if cast_type in ("bool", "_Bool"):
+            return f"Boolean({expr})"
+        return f"({expr})"
+
+    return cast_pattern.sub(replacer, code)
+
+def replace_prompted_scanf(code):
+    pattern = re.compile(
+        r'printf\s*\(\s*"([^"]*)"\s*\)\s*;\s*'
+        r'scanf\s*\(\s*"(%[dfc])"\s*,\s*&\s*(\w+)\s*\)\s*;',
+        re.MULTILINE
+    )
+    def replacer(match):
+        prompt_text = match.group(1)
+        fmt = match.group(2)
+        var = match.group(3)
+        if fmt in ("%d", "%f"):
+            return f'{var} = Number(prompt("{prompt_text}"));'
+        if fmt == "%c":
+            return f'{var} = prompt("{prompt_text}")[0];'
+        if fmt == "%s":
+            return f'{var} = prompt("{prompt_text}");'
+        return match.group(0)
+    return pattern.sub(replacer, code)
+
+def replace_scanf(code):
+    def replacer(match):
+        fmt = match.group(1).strip()
+        var = match.group(2).strip()
+        if fmt in ("%d", "%f"):
+            return f"{var} = Number(prompt());"
+        if fmt == "%c":
+            return f"{var} = prompt()[0];"
+        if fmt == "%s":
+            return f"{var} = prompt();"
+        return match.group(0)
+    return re.sub(r'scanf\s*\(\s*"([^"]+)"\s*,\s*&\s*(\w+)\s*\)\s*;', replacer, code)
+
+def convert_printf_to_template(code):
+    def replacer(match):
+        fmt = match.group(1)
+        args = match.group(2)
+        if not args:
+            return f"console.log(`{fmt}`);"
+        arg_list = [a.strip() for a in args.split(",")]
+        specs = re.findall(r"%[dfsci]", fmt)
+        if len(specs) != len(arg_list):
+            raise SyntaxError("printf format specifier mismatch")
+        for spec, arg in zip(specs, arg_list):
+            fmt = fmt.replace(spec, f"${{{arg}}}", 1)
+        return f"console.log(`{fmt}`);"
+
+    return re.sub(r'printf\s*\(\s*"([^"]*)"\s*(?:,\s*(.*?))?\s*\)\s*;', replacer, code)
+
+def extract_pointer_variables(code, known_types=None):
+    if known_types is None:
+        known_types = set()
+    base_types = r"(?:(?:unsigned|signed|long\s+long|long|short|const|static)\s+)*(?:int|float|double|char|short|long|void|bool|_Bool|[a-zA-Z_]\w*)"
+    pattern = rf'\b(?:{base_types})\s*\*+\s*([a-zA-Z_]\w*)'
+    return set(re.findall(pattern, code))
+
+def replace_variable_declarations(code, known_types=None, array_names=None):
+    if known_types is None:
+        known_types = set()
+    if array_names is None:
+        array_names = set()
+
+    types_list = [
+        "int", "float", "double", "char", "short", "long",
+        "unsigned int", "unsigned long", "unsigned short", "unsigned char",
+        "long long", "unsigned long long", "unsigned", "signed int", "signed",
+        "bool", "_Bool", "void"
+    ]
+    types_list.extend(known_types)
+    types_list = sorted(types_list, key=len, reverse=True)
+    type_pat = "|".join(re.escape(t) for t in types_list)
+    full_type_pat = rf"(?:(?:const|static|volatile)\s+)?(?:enum\s+\w+|struct\s+\w+|{type_pat})"
+
+    # 1. Pointer declarations: type *p = ...; or type* p;
+    ptr_decl_pattern = re.compile(
+        rf'\b({full_type_pat})\s*\*+\s*([a-zA-Z_]\w*)\s*(?:=\s*([^;]+))?\s*;'
+    )
+    def ptr_repl(match):
+        type_prefix = match.group(1).strip()
+        var = match.group(2).strip()
+        init = match.group(3)
+        kw = "const" if "const" in type_prefix else "let"
+        if init:
+            init = init.strip()
+            if init in array_names:
+                init = f"__ref_arr({init}, 0)"
+            elif init == "NULL":
+                init = "null"
+            return f"{kw} {var} = {init};"
+        else:
+            return f"let {var} = null;"
+
+    code = ptr_decl_pattern.sub(ptr_repl, code)
+
+    # 2. General variable declarations: type a = 5, b = 10;
+    var_decl_pattern = re.compile(
+        rf'\b({full_type_pat})\s+([a-zA-Z_]\w*(?:\s*=\s*[^,;]+)?(?:\s*,\s*[a-zA-Z_]\w*(?:\s*=\s*[^,;]+)?)*)\s*;'
+    )
+    def var_repl(match):
+        type_prefix = match.group(1).strip()
+        decl_list = match.group(2).strip()
+        kw = "const" if "const" in type_prefix else "let"
+        return f"{kw} {decl_list};"
+
+    code = var_decl_pattern.sub(var_repl, code)
+    return code
+
+def transform_pointers_and_references(code, pointer_vars, array_names):
+    # 1. Arrow operator: ptr->prop -> ptr.prop
+    code = re.sub(r'([a-zA-Z_]\w*)\s*->\s*([a-zA-Z_]\w*)', r'\1.\2', code)
+
+    # 2. Address-of:
+    code = re.sub(
+        r'(^|[=([,?:;\s])&\s*([a-zA-Z_]\w*)\s*\[([^\]]+)\]',
+        r'\1__ref_arr(\2, \3)',
+        code
+    )
+    code = re.sub(
+        r'(^|[=([,?:;\s])&\s*([a-zA-Z_]\w*)\.([a-zA-Z_]\w*)',
+        r'\1__ref_prop(\2, "\3")',
+        code
+    )
+    code = re.sub(
+        r'(^|[=([,?:;\s])&\s*([a-zA-Z_]\w*)',
+        r'\1__ref(() => \2, __v => \2 = __v)',
         code
     )
 
-def replace_struct_array_declarations(code, structs):
-    """
-    struct Point p[3];
-    Point p[3];
-    """
-    for struct, fields in structs.items():
-        pattern = rf'\b(struct\s+)?{struct}\s+(\w+)\s*\[(\d+)\]\s*;'
+    # 3. Dereference write:
+    code = re.sub(
+        r'\*\s*\(\s*([a-zA-Z_]\w*)\s*\+\s*([^)]+)\s*\)\s*=\s*([^;]+);',
+        r'__set_deref(__ptr_add(\1, \2), \3);',
+        code
+    )
+    code = re.sub(
+        r'\*\s*\(\s*([a-zA-Z_]\w*)\s*-\s*([^)]+)\s*\)\s*=\s*([^;]+);',
+        r'__set_deref(__ptr_sub(\1, \2), \3);',
+        code
+    )
+    code = re.sub(
+        r'\*\s*\*\s*([a-zA-Z_]\w*)\s*=\s*([^;]+);',
+        r'__set_deref(__deref(\1), \2);',
+        code
+    )
+    # Unary * on LHS must be preceded by start of line, ;, {, }, or return
+    code = re.sub(
+        r'(^|[;{}\s])\*\s*([a-zA-Z_]\w*)\s*=\s*([^;]+);',
+        r'\1__set_deref(\2, \3);',
+        code
+    )
 
-        def repl(match):
-            var = match.group(2)
-            size = int(match.group(3))
-            obj = "{ " + ", ".join(f"{f}: 0" for f in fields) + " }"
-            return f"let {var} = Array({size}).fill(null).map(()=>({obj}));"
+    # 4. Dereference read:
+    code = re.sub(
+        r'\*\s*\(\s*([a-zA-Z_]\w*)\s*\+\s*([^)]+)\s*\)',
+        r'__deref(__ptr_add(\1, \2))',
+        code
+    )
+    code = re.sub(
+        r'\*\s*\(\s*([a-zA-Z_]\w*)\s*-\s*([^)]+)\s*\)',
+        r'__deref(__ptr_sub(\1, \2))',
+        code
+    )
+    # Unary ** or * on RHS: MUST be preceded by operator or statement boundary, NOT operand!
+    unary_prefix = r'(^|[=([,?:;{}!+\-*/%<>|&~]|\breturn)\s*'
+    code = re.sub(
+        unary_prefix + r'\*\s*\*\s*([a-zA-Z_]\w*)',
+        r'\1__deref(__deref(\2))',
+        code
+    )
+    code = re.sub(
+        unary_prefix + r'\*\s*([a-zA-Z_]\w*)',
+        r'\1__deref(\2)',
+        code
+    )
 
-        code = re.sub(pattern, repl, code)
+    # 5. Pointer arithmetic:
+    for pv in pointer_vars:
+        code = re.sub(rf'\b{pv}\s*\+\+', f'{pv} = __ptr_add({pv}, 1)', code)
+        code = re.sub(rf'\+\+\s*{pv}\b', f'{pv} = __ptr_add({pv}, 1)', code)
+        code = re.sub(rf'\b{pv}\s*--', f'{pv} = __ptr_sub({pv}, 1)', code)
+        code = re.sub(rf'--\s*{pv}\b', f'{pv} = __ptr_sub({pv}, 1)', code)
+        code = re.sub(rf'\b{pv}\s*\+=\s*([^;]+)', rf'{pv} = __ptr_add({pv}, \1)', code)
+        code = re.sub(rf'\b{pv}\s*-=\s*([^;]+)', rf'{pv} = __ptr_sub({pv}, \1)', code)
 
     return code
+
+def remove_param_types(param_str):
+    if not param_str.strip():
+        return ""
+    params = param_str.split(",")
+    clean = []
+    for p in params:
+        p = p.strip()
+        m = re.search(r"([a-zA-Z_]\w*)\s*(?:\[[^\]]*\])?$", p)
+        if m:
+            clean.append(m.group(1))
+        else:
+            clean.append(p)
+    return ", ".join(clean)
+
+def extract_globals_functions_and_main(code):
+    type_regex = r"(?:(?:unsigned|signed|const|static)\s+)*(?:struct\s+\w+|\w+)(?:\s*\*+)?"
+    sig_pattern = re.compile(rf"\b({type_regex})\s+([a-zA-Z_]\w*)\s*\(([^)]*)\)\s*\{{", re.MULTILINE)
+    functions = []
+    main_body = ""
+    globals_list = []
+    idx = 0
+    last_end = 0
+    while idx < len(code):
+        m = sig_pattern.search(code, idx)
+        if not m:
+            break
+        pre_code = code[last_end:m.start()].strip()
+        if pre_code:
+            globals_list.append(pre_code)
+        ret_type = m.group(1).strip()
+        fn_name = m.group(2).strip()
+        params = m.group(3).strip()
+        brace_start = m.end() - 1
+        brace_count = 0
+        end_brace = -1
+        for i in range(brace_start, len(code)):
+            if code[i] == '{':
+                brace_count += 1
+            elif code[i] == '}':
+                brace_count -= 1
+                if brace_count == 0:
+                    end_brace = i
+                    break
+        if end_brace == -1:
+            break
+        body = code[brace_start + 1:end_brace]
+        if fn_name == "main":
+            main_body = body
+        else:
+            functions.append({
+                "ret_type": ret_type,
+                "name": fn_name,
+                "params": params,
+                "body": body
+            })
+        idx = end_brace + 1
+        last_end = idx
+
+    after_code = code[last_end:].strip()
+    if after_code:
+        globals_list.append(after_code)
+
+    return "\n\n".join(globals_list), functions, main_body
+
+def remove_return_zero(code):
+    return re.sub(r'\breturn\s+0\s*;', '', code)
+
+def process_block(block_code, known_types, array_names, pointer_vars, structs, typedef_types, array_vars):
+    block_code = replace_sizeof(block_code, typedef_types, structs, array_vars)
+    block_code = replace_type_casting(block_code, known_types)
+    block_code = replace_prompted_scanf(block_code)
+    block_code = replace_scanf(block_code)
+    block_code = convert_printf_to_template(block_code)
+    block_code = replace_variable_declarations(block_code, known_types, array_names)
+    block_code = transform_pointers_and_references(block_code, pointer_vars, array_names)
+    return block_code

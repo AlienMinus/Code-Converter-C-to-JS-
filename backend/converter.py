@@ -1,59 +1,96 @@
 from tokenizer import *
 from validator import detect_undeclared_variables
+import re
 
 def convert_c_to_js(c_code):
+    # Step 1: Comments cleanup
+    code = remove_comments(c_code)
 
-    validate_headers(c_code)
-    headers = extract_headers(c_code)
+    # Step 2: Validate and extract included headers
+    validate_headers(code)
+    headers = extract_headers(code)
 
-    # ---- MACROS ----
-    macros = extract_macros(c_code)
-    code = remove_macros(c_code)
+    # Step 3: Extract and apply preprocessor macros
+    macros = extract_macros(code)
+    code = remove_macros(code)
     code = apply_macros(code, macros)
 
-    # ---- TYPEDEF STRUCTS ----
-    typedef_structs = extract_typedef_structs(code)
-    code = remove_typedef_structs(code)
+    # Step 4: Extract all typedef aliases (primitives, pointers, structs, enums)
+    typedef_types, typedef_structs, typedef_enums, code = extract_all_typedefs(code)
 
-    # ---- STRUCTS ----
+    # Step 5: Extract and convert enum definitions
+    enums, code = extract_and_convert_enums(code)
+
+    # Step 6: Extract struct definitions
     structs = extract_structs(code)
     code = remove_struct_definitions(code)
     structs.update(typedef_structs)
 
-    # ---- STRUCT ARRAYS (NEW) ----
+    known_types = set(typedef_types.keys()) | set(structs.keys()) | set(enums.keys())
+
+    # Step 7: Handle struct and primitive arrays
+    array_vars = extract_array_declarations(code)
     code = replace_struct_array_declarations(code, structs)
-
-    # ---- NORMAL ARRAYS (NEW) ----
     code = replace_array_declarations(code)
+    array_names = set(array_vars.keys())
 
-    # ---- STRUCT VARIABLES ----
+    # Step 8: Handle struct variable declarations (designated, positional, and uninitialized)
     code = replace_struct_declarations(code, structs)
 
-    # ---- PREPROCESS ----
+    # Step 9: Extract pointer variable names
+    pointer_vars = extract_pointer_variables(code, known_types)
+
+    # Step 10: Remove #include directives
     code = remove_includes(code)
 
-    declared_vars = collect_declared_variables(code)
+    # Step 11: Extract top-level globals, user functions, and main function
+    global_code, functions_list, main_body = extract_globals_functions_and_main(code)
 
-    functions = extract_non_main_functions(code)
-    functions = convert_function_syntax(functions)
+    processed_globals = process_block(
+        global_code, known_types, array_names, pointer_vars, structs, typedef_types, array_vars
+    )
 
-    main_body = extract_main_body(code)
+    # Step 12: Process each non-main user function body and signature
+    fn_strings = []
+    for fn in functions_list:
+        clean_p = remove_param_types(fn["params"])
+        fn_pointer_vars = set(pointer_vars)
+        for p in fn["params"].split(","):
+            if "*" in p:
+                m = re.search(r"([a-zA-Z_]\w*)\s*$", p.strip())
+                if m:
+                    fn_pointer_vars.add(m.group(1))
+
+        processed_body = process_block(
+            fn["body"], known_types, array_names, fn_pointer_vars, structs, typedef_types, array_vars
+        )
+        fn_strings.append(f"function {fn['name']}({clean_p}) {{{processed_body}}}")
+
+    # Step 13: Process main body
     main_body = remove_return_zero(main_body)
+    processed_main = process_block(
+        main_body, known_types, array_names, pointer_vars, structs, typedef_types, array_vars
+    )
 
-    js = functions + "\n\n" + main_body
+    parts = []
+    if processed_globals.strip():
+        parts.append(processed_globals.strip())
+    if fn_strings:
+        parts.append("\n\n".join(fn_strings))
+    if processed_main.strip():
+        parts.append(processed_main.strip())
 
-    js = replace_prompted_scanf(js)
-    js = replace_scanf(js)
-    js = convert_printf_to_template(js)
-    js = replace_variable_declarations(js)
+    user_js = "\n\n".join(parts)
 
-    used_functions = extract_function_calls(code)
-    js = inject_header_runtime(js, headers, used_functions)
+    # Step 14: Check undeclared variables in user code
+    undeclared = detect_undeclared_variables(user_js, set())
 
-    undeclared = detect_undeclared_variables(js, declared_vars)
+    # Step 15: Inject C runtime and standard library implementations
+    used_functions = extract_function_calls(c_code)
+    final_js = inject_header_runtime(user_js.strip(), headers, used_functions)
 
     return {
-        "js": js.strip(),
+        "js": final_js.strip(),
         "structs": structs,
         "macros": macros,
         "undeclared": list(undeclared)
