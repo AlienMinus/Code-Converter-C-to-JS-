@@ -46,9 +46,12 @@ def convert_c_to_js(c_code):
     # Step 11: Extract top-level globals, user functions, and main function
     global_code, functions_list, main_body = extract_globals_functions_and_main(code)
 
+    import textwrap
+
     processed_globals = process_block(
         global_code, known_types, array_names, pointer_vars, structs, typedef_types, array_vars
     )
+    processed_globals = textwrap.dedent(processed_globals).strip()
 
     # Step 12: Process each non-main user function body and signature
     fn_strings = []
@@ -64,13 +67,16 @@ def convert_c_to_js(c_code):
         processed_body = process_block(
             fn["body"], known_types, array_names, fn_pointer_vars, structs, typedef_types, array_vars
         )
-        fn_strings.append(f"function {fn['name']}({clean_p}) {{{processed_body}}}")
+        dedented_body = textwrap.dedent(processed_body).strip()
+        indented_body = textwrap.indent(dedented_body, "    ")
+        fn_strings.append(f"function {fn['name']}({clean_p}) {{\n{indented_body}\n}}")
 
     # Step 13: Process main body
     main_body = remove_return_zero(main_body)
     processed_main = process_block(
         main_body, known_types, array_names, pointer_vars, structs, typedef_types, array_vars
     )
+    processed_main = textwrap.dedent(processed_main).strip()
 
     parts = []
     if processed_globals.strip():

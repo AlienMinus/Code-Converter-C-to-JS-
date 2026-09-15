@@ -248,7 +248,7 @@ def get_needed_runtime(js_code, headers):
         "exit": "const exit = (code) => { throw new Error(`Process exited with code ${code}`); };"
     }
     for fn, impl in stdlib_funcs.items():
-        if re.search(rf"\b{fn}\b", js_code):
+        if re.search(rf"(?<!\.)\b{fn}\b", js_code):
             runtime_parts.append(impl)
 
     # string.h functions (only include if actually used)
@@ -280,7 +280,7 @@ def get_needed_runtime(js_code, headers):
         "strncmp": "const strncmp = strcmp;"
     }
     for fn, impl in string_funcs.items():
-        if re.search(rf"\b{fn}\b", js_code):
+        if re.search(rf"(?<!\.)\b{fn}\b", js_code):
             runtime_parts.append(impl)
 
     # ctype.h functions (only include if actually used)
@@ -293,7 +293,7 @@ def get_needed_runtime(js_code, headers):
         "isspace": "const isspace = (c) => { const ch = typeof c === 'number' ? String.fromCharCode(c) : String(c); return /\\s/.test(ch) ? 1 : 0; };"
     }
     for fn, impl in ctype_funcs.items():
-        if re.search(rf"\b{fn}\b", js_code):
+        if re.search(rf"(?<!\.)\b{fn}\b", js_code):
             runtime_parts.append(impl)
 
     # math.h functions (only include if actually used)
@@ -310,8 +310,12 @@ def get_needed_runtime(js_code, headers):
         "exp": "const exp = Math.exp;"
     }
     for fn, impl in math_funcs.items():
-        if re.search(rf"\b{fn}\b", js_code):
-            runtime_parts.append(impl)
+        if fn == "log":
+            if re.search(r"(?<!\.)\blog\s*\(", js_code):
+                runtime_parts.append(impl)
+        else:
+            if re.search(rf"(?<!\.)\b{fn}\s*\(", js_code):
+                runtime_parts.append(impl)
 
     # limits.h constants (only include if actually used)
     limits_constants = {
@@ -469,11 +473,12 @@ def remove_struct_definitions(code):
 
 def extract_array_declarations(code):
     base_types = r"(?:(?:unsigned|signed|long\s+long|long|short|const|static)\s+)*(?:int|float|double|char|short|long|void|bool|_Bool|\w+)"
-    pattern = rf'\b({base_types})\s+(\w+)\s*\[(\d+)\]\s*(=\s*\{{[^}}]+\}})?\s*;'
+    pattern = rf'\b({base_types})\s+(\w+)\s*\[(\d*)\]\s*(?:=\s*([^;]+))?\s*;'
     matches = re.findall(pattern, code)
     arrays = {}
-    for elem_type, name, size, init in matches:
-        arrays[name] = (elem_type.strip(), int(size))
+    for elem_type, name, size_str, init in matches:
+        size = int(size_str) if size_str.strip().isdigit() else 0
+        arrays[name] = (elem_type.strip(), size)
     return arrays
 
 def replace_struct_array_declarations(code, structs):
@@ -497,11 +502,11 @@ def replace_struct_declarations(code, structs):
             pairs = []
             for item in init_body.split(","):
                 item = item.strip()
-                if not item:
-                    continue
-                m = re.match(r'\.?([a-zA-Z_]\w*)\s*=\s*(.+)', item)
-                if m:
-                    pairs.append(f"{m.group(1)}: {m.group(2).strip()}")
+                if "=" in item:
+                    k, v = item.split("=", 1)
+                    k = k.strip().lstrip(".")
+                    v = v.strip()
+                    pairs.append(f"{k}: {v}")
             return f"let {var} = {{ {', '.join(pairs)} }};"
         code = re.sub(desig_pattern, desig_repl, code)
 
@@ -531,15 +536,19 @@ def replace_struct_declarations(code, structs):
 
 def replace_array_declarations(code):
     base_types = r"(?:(?:unsigned|signed|long\s+long|long|short|const|static)\s+)*(?:int|float|double|char|short|long|void|bool|_Bool|\w+)"
-    pattern = rf'\b{base_types}\s+(\w+)\s*\[(\d+)\]\s*(=\s*\{{([^}}]+)\}})?\s*;'
+    pattern = rf'\b{base_types}\s+(\w+)\s*\[(\d*)\]\s*(?:=\s*([^;]+))?\s*;'
     def repl(match):
         name = match.group(1)
-        size = match.group(2)
+        size_str = match.group(2)
         init_body = match.group(3)
         if init_body:
-            values = match.group(4)
-            return f"let {name} = [{values}];"
+            init_body = init_body.strip()
+            if init_body.startswith("{") and init_body.endswith("}"):
+                values = init_body[1:-1].strip()
+                return f"let {name} = [{values}];"
+            return f"let {name} = {init_body};"
         else:
+            size = size_str.strip() if size_str.strip() else "0"
             return f"let {name} = Array({size}).fill(0);"
     return re.sub(pattern, repl, code)
 
@@ -616,7 +625,7 @@ def replace_type_casting(code, known_types=None):
         expr = match.group(2).strip()
 
         if "*" in cast_type or cast_type in ("void*", "void *"):
-            return f"({expr})"
+            return expr
         if cast_type in ("int", "short", "long", "long long", "signed int"):
             return f"(typeof ({expr}) === 'string' ? ({expr}).charCodeAt(0) : Math.trunc({expr}))"
         if cast_type in ("unsigned int", "unsigned long", "unsigned short", "unsigned char"):
@@ -883,12 +892,36 @@ def extract_globals_functions_and_main(code):
 def remove_return_zero(code):
     return re.sub(r'\breturn\s+0\s*;', '', code)
 
+def mask_c_strings(code):
+    placeholders = []
+    pattern = re.compile(r'("(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\')')
+    def repl(m):
+        idx = len(placeholders)
+        placeholders.append(m.group(0))
+        return f"___LEX_STR_LIT_{idx}___"
+    return pattern.sub(repl, code), placeholders
+
+def unmask_c_strings(code, placeholders):
+    for idx, orig in enumerate(placeholders):
+        code = code.replace(f"___LEX_STR_LIT_{idx}___", orig)
+    return code
+
 def process_block(block_code, known_types, array_names, pointer_vars, structs, typedef_types, array_vars):
-    block_code = replace_sizeof(block_code, typedef_types, structs, array_vars)
-    block_code = replace_type_casting(block_code, known_types)
+    # Step A: Transform prompted and standalone scanf before pointer transforms alter &var
     block_code = replace_prompted_scanf(block_code)
     block_code = replace_scanf(block_code)
+
+    # Step B: Protect string and char literals from subsequent code transformations
+    masked_code, placeholders = mask_c_strings(block_code)
+
+    masked_code = replace_sizeof(masked_code, typedef_types, structs, array_vars)
+    masked_code = replace_type_casting(masked_code, known_types)
+    masked_code = replace_variable_declarations(masked_code, known_types, array_names)
+    masked_code = transform_pointers_and_references(masked_code, pointer_vars, array_names)
+
+    # Step C: Unmask string literals
+    block_code = unmask_c_strings(masked_code, placeholders)
+
+    # Step D: Convert printf into template literals
     block_code = convert_printf_to_template(block_code)
-    block_code = replace_variable_declarations(block_code, known_types, array_names)
-    block_code = transform_pointers_and_references(block_code, pointer_vars, array_names)
     return block_code

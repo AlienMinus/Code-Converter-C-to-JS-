@@ -285,6 +285,19 @@ select:hover, select:focus {
   border-color: var(--border-color);
 }
 
+#toggleRuntimeBtn {
+  background: rgba(56, 189, 248, 0.1);
+  color: var(--accent-blue);
+  border: 1px solid rgba(56, 189, 248, 0.3);
+  font-size: 11px;
+}
+
+#toggleRuntimeBtn:hover {
+  background: rgba(56, 189, 248, 0.2);
+  border-color: var(--accent-blue);
+  color: #fff;
+}
+
 .save-status {
   font-size: 11px;
   color: var(--text-dim);

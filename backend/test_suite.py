@@ -155,7 +155,8 @@ for name, c_code, expected in test_cases:
     print(f"\n[TEST] {name}")
     try:
         res = convert_c_to_js(c_code)
-        js = res["js"]
+        js = res.get("full_js", res["js"])
+        clean_js = res["js"]
         undeclared = res["undeclared"]
 
         if undeclared:

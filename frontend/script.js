@@ -6,6 +6,8 @@ let cEditor, jsEditor, outputEditor;
 let editorReady = false;
 const STORAGE_KEY = "lexcodex_c_code_v1";
 let saveTimeout = null;
+let lastConversionData = null;
+let showingRuntime = false;
 
 // ================= PRESET C CODES =================
 const PRESETS = {
@@ -312,8 +314,25 @@ function convert() {
         return;
       }
 
-      const jsCode = data.js || data.result;
-      jsEditor.setValue(jsCode);
+      lastConversionData = data;
+      showingRuntime = false;
+
+      const userJs = data.js || data.result;
+      const fullJs = data.full_js || userJs;
+      const hasRuntime = Boolean(data.runtime && data.runtime.trim().length > 0);
+
+      const toggleBtn = document.getElementById("toggleRuntimeBtn");
+      if (toggleBtn) {
+        if (hasRuntime) {
+          toggleBtn.style.display = "inline-block";
+          toggleBtn.textContent = "Show Helpers";
+        } else {
+          toggleBtn.style.display = "none";
+        }
+      }
+
+      // Display clean transpiled code in the editor
+      jsEditor.setValue(userJs);
 
       // Undeclared variable warnings
       if (data.undeclared && data.undeclared.length > 0) {
@@ -323,8 +342,8 @@ function convert() {
         undeclaredBadge.style.display = "none";
       }
 
-      // Execute JavaScript
-      runJS(jsCode, transpileTime);
+      // Execute full JavaScript (with runtime helpers if needed)
+      runJS(fullJs, transpileTime);
       runBtn.disabled = false;
     })
     .catch((err) => {
@@ -373,6 +392,10 @@ function onPresetChange(presetKey) {
   cEditor.setValue(newCode);
   localStorage.setItem(STORAGE_KEY, newCode);
   setSaveStatus("Saved");
+  const toggleBtn = document.getElementById("toggleRuntimeBtn");
+  if (toggleBtn) toggleBtn.style.display = "none";
+  lastConversionData = null;
+  showingRuntime = false;
   showToast(`Loaded Preset: ${presetKey.replace(/_/g, ' ')}`);
 }
 
@@ -382,7 +405,26 @@ function resetCurrentPreset() {
     cEditor.setValue(PRESETS[select.value]);
     localStorage.setItem(STORAGE_KEY, PRESETS[select.value]);
     setSaveStatus("Reset");
+    const toggleBtn = document.getElementById("toggleRuntimeBtn");
+    if (toggleBtn) toggleBtn.style.display = "none";
+    lastConversionData = null;
+    showingRuntime = false;
     showToast("Reset to preset default");
+  }
+}
+
+function toggleRuntimeHelpers() {
+  if (!lastConversionData || !jsEditor) return;
+  showingRuntime = !showingRuntime;
+  const btn = document.getElementById("toggleRuntimeBtn");
+  if (showingRuntime) {
+    jsEditor.setValue(lastConversionData.full_js || lastConversionData.js);
+    if (btn) btn.textContent = "Hide Helpers";
+    showToast("Showing complete code with runtime helpers");
+  } else {
+    jsEditor.setValue(lastConversionData.js || lastConversionData.result);
+    if (btn) btn.textContent = "Show Helpers";
+    showToast("Showing clean transpiled code");
   }
 }
 
